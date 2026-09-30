@@ -14,13 +14,22 @@ type lexer struct {
 	// An empty token means EOF.
 	Token string
 
+	// Pos contains the position of Token in the parsed string.
+	Pos Span
+
 	prevTokens []string
+	prevPos    []Span
 	nextTokens []string
+	nextPos    []Span
 
 	sOrig string
 	sTail string
 
-	err error
+	// base is added to all the positions.
+	base int
+
+	err    error
+	errPos int
 }
 
 func (lex *lexer) Context() string {
@@ -29,16 +38,42 @@ func (lex *lexer) Context() string {
 
 func (lex *lexer) Init(s string) {
 	lex.Token = ""
+	lex.Pos = Span{Start: lex.base, End: lex.base}
 	lex.prevTokens = nil
+	lex.prevPos = nil
 	lex.nextTokens = nil
+	lex.nextPos = nil
 	lex.err = nil
+	lex.errPos = 0
 
 	lex.sOrig = s
 	lex.sTail = s
 }
 
+// offset returns the current position of the lexer in the parsed string.
+func (lex *lexer) offset() int {
+	return lex.base + len(lex.sOrig) - len(lex.sTail)
+}
+
+// LastEnd returns the end position of the last consumed token.
+func (lex *lexer) LastEnd() int {
+	if n := len(lex.prevPos); n > 0 {
+		return lex.prevPos[n-1].End
+	}
+	return lex.base
+}
+
+// ErrorPos returns the position the lexer or parser failed at.
+func (lex *lexer) ErrorPos() Span {
+	if lex.err != nil {
+		return Span{Start: lex.errPos, End: lex.base + len(lex.sOrig)}
+	}
+	return lex.Pos
+}
+
 func (lex *lexer) PushBack(currToken, sHead string) {
 	lex.Token = currToken
+	lex.Pos.End = lex.Pos.Start + len(currToken)
 	lex.sTail = sHead + lex.sTail
 }
 
@@ -47,9 +82,12 @@ func (lex *lexer) Next() error {
 		return lex.err
 	}
 	lex.prevTokens = append(lex.prevTokens, lex.Token)
+	lex.prevPos = append(lex.prevPos, lex.Pos)
 	if len(lex.nextTokens) > 0 {
 		lex.Token = lex.nextTokens[len(lex.nextTokens)-1]
 		lex.nextTokens = lex.nextTokens[:len(lex.nextTokens)-1]
+		lex.Pos = lex.nextPos[len(lex.nextPos)-1]
+		lex.nextPos = lex.nextPos[:len(lex.nextPos)-1]
 		return nil
 	}
 	token, err := lex.next()
@@ -62,6 +100,18 @@ func (lex *lexer) Next() error {
 }
 
 func (lex *lexer) next() (string, error) {
+	token, err := lex.nextToken()
+	if err != nil {
+		lex.errPos = lex.offset()
+		return "", err
+	}
+	if token == "" {
+		lex.Pos = Span{Start: lex.base + len(lex.sOrig), End: lex.base + len(lex.sOrig)}
+	}
+	return token, nil
+}
+
+func (lex *lexer) nextToken() (string, error) {
 again:
 	// Skip whitespace
 	s := lex.sTail
@@ -76,6 +126,7 @@ again:
 		return "", nil
 	}
 
+	start := lex.offset()
 	var token string
 	var err error
 	switch s[0] {
@@ -124,16 +175,19 @@ again:
 	}
 	if strings.HasPrefix(s, "$__interval") {
 		lex.sTail = s[len("$__interval"):]
+		lex.Pos = Span{Start: start, End: start + len("$__interval")}
 		return "$__interval", nil
 	}
 	if strings.HasPrefix(s, "$__rate_interval") {
 		lex.sTail = s[len("$__rate_interval"):]
+		lex.Pos = Span{Start: start, End: start + len("$__rate_interval")}
 		return "$__interval", nil
 	}
 	return "", fmt.Errorf("cannot recognize %q", s)
 
 tokenFoundLabel:
 	lex.sTail = s[len(token):]
+	lex.Pos = Span{Start: start, End: start + len(token)}
 	return token, nil
 }
 
@@ -444,8 +498,11 @@ func ifEscapedCharsAppendQuotedIdent(dst []byte, s string) []byte {
 
 func (lex *lexer) Prev() {
 	lex.nextTokens = append(lex.nextTokens, lex.Token)
+	lex.nextPos = append(lex.nextPos, lex.Pos)
 	lex.Token = lex.prevTokens[len(lex.prevTokens)-1]
 	lex.prevTokens = lex.prevTokens[:len(lex.prevTokens)-1]
+	lex.Pos = lex.prevPos[len(lex.prevPos)-1]
+	lex.prevPos = lex.prevPos[:len(lex.prevPos)-1]
 }
 
 func isEOF(s string) bool {

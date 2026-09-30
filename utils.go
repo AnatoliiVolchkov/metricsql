@@ -1,7 +1,6 @@
 package metricsql
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -166,7 +165,7 @@ func checkSupportedFunctions(e Expr) error {
 		}
 
 		if !IsSupportedFunction(fe.Name) {
-			err = fmt.Errorf("unsupported function %q", fe.Name)
+			err = newParseError(fe.Pos, "unsupported function %q", fe.Name)
 		}
 	})
 	return err

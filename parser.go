@@ -12,6 +12,9 @@ import (
 // All the `WITH` expressions are expanded in the returned Expr.
 //
 // MetricsQL is backwards-compatible with PromQL.
+//
+// All the returned expressions implement SourceNode, which can be used for obtaining
+// the location of the expression in s. The returned error is *ParseError.
 func Parse(s string) (Expr, error) {
 	// Parse s
 	e, err := parseInternal(s)
@@ -22,7 +25,7 @@ func Parse(s string) (Expr, error) {
 	// Expand `WITH` expressions.
 	was := getDefaultWithArgExprs()
 	if e, err = expandWithExpr(was, e); err != nil {
-		return nil, fmt.Errorf(`cannot expand WITH expressions: %s`, err)
+		return nil, newParseError(Span{Start: 0, End: len(s)}, `cannot expand WITH expressions: %s`, err)
 	}
 	e = removeParensExpr(e)
 	e = simplifyConstants(e)
@@ -36,14 +39,14 @@ func parseInternal(s string) (Expr, error) {
 	var p parser
 	p.lex.Init(s)
 	if err := p.lex.Next(); err != nil {
-		return nil, fmt.Errorf(`cannot find the first token: %s`, err)
+		return nil, newParseError(p.lex.ErrorPos(), `cannot find the first token: %s`, err)
 	}
 	e, err := p.parseExpr()
 	if err != nil {
-		return nil, fmt.Errorf(`%s; unparsed data: %q`, err, p.lex.Context())
+		return nil, newParseError(p.lex.ErrorPos(), `%s; unparsed data: %q`, err, p.lex.Context())
 	}
 	if !isEOF(p.lex.Token) {
-		return nil, fmt.Errorf(`unparsed data left: %q`, p.lex.Context())
+		return nil, newParseError(Span{Start: p.lex.Pos.Start, End: len(s)}, `unparsed data left: %q`, p.lex.Context())
 	}
 	return e, nil
 }
@@ -93,7 +96,7 @@ func checkDuplicateWithArgNames(was []*withArgExpr) error {
 	m := make(map[string]*withArgExpr, len(was))
 	for _, wa := range was {
 		if waOld := m[wa.Name]; waOld != nil {
-			return fmt.Errorf("duplicate `with` arg name for: %s; previous one: %s", wa, waOld.AppendString(nil))
+			return fmt.Errorf("duplicate `with` arg name for: %s; previous one: %s", wa.AppendString(nil), waOld.AppendString(nil))
 		}
 		m[wa.Name] = wa
 	}
@@ -102,6 +105,7 @@ func checkDuplicateWithArgNames(was []*withArgExpr) error {
 
 func mustParseWithArgExpr(s string) *withArgExpr {
 	var p parser
+	p.lex.base = defaultTemplateBase
 	p.lex.Init(s)
 	if err := p.lex.Next(); err != nil {
 		panic(fmt.Errorf("BUG: cannot find the first token in %q: %s", s, err))
@@ -110,6 +114,7 @@ func mustParseWithArgExpr(s string) *withArgExpr {
 	if err != nil {
 		panic(fmt.Errorf("BUG: cannot parse %q: %s; unparsed data: %q", s, err, p.lex.Context()))
 	}
+	wa.isDefault = true
 	return wa
 }
 
@@ -137,17 +142,21 @@ func removeParensExpr(e Expr) Expr {
 		}
 		return t
 	case *parensExpr:
-		args := *t
+		args := t.args
 		for i, arg := range args {
 			args[i] = removeParensExpr(arg)
 		}
-		if len(*t) == 1 {
-			return args[0]
+		if len(args) == 1 {
+			if t.synthetic {
+				return args[0]
+			}
+			return withParens(args[0], t.Pos)
 		}
 		// Treat parensExpr as a function with empty name, i.e. union()
 		fe := &FuncExpr{
-			Name: "",
-			Args: args,
+			Name:       "",
+			Args:       args,
+			SourceInfo: SourceInfo{Pos: t.Pos, Origin: t.Origin},
 		}
 		return fe
 	case *withExpr:
@@ -195,7 +204,8 @@ func simplifyConstantsInBinaryExpr(be *BinaryOpExpr) Expr {
 	if lok && rok {
 		n := binaryOpEvalNumber(be.Op, lne.N, rne.N, be.Bool)
 		return &NumberExpr{
-			N: n,
+			N:          n,
+			SourceInfo: be.SourceInfo,
 		}
 	}
 
@@ -208,7 +218,8 @@ func simplifyConstantsInBinaryExpr(be *BinaryOpExpr) Expr {
 	if be.Op == "+" {
 		// convert "foo" + "bar" to "foobar".
 		return &StringExpr{
-			S: lse.S + rse.S,
+			S:          lse.S + rse.S,
+			SourceInfo: be.SourceInfo,
 		}
 	}
 	if !IsBinaryOpCmp(be.Op) {
@@ -240,7 +251,8 @@ func simplifyConstantsInBinaryExpr(be *BinaryOpExpr) Expr {
 		n = nan
 	}
 	return &NumberExpr{
-		N: n,
+		N:          n,
+		SourceInfo: be.SourceInfo,
 	}
 }
 
@@ -261,6 +273,11 @@ type parser struct {
 	lex lexer
 }
 
+// spanFrom returns the span from start till the end of the last consumed token.
+func (p *parser) spanFrom(start int) Span {
+	return Span{Start: start, End: p.lex.LastEnd()}
+}
+
 func isWith(s string) bool {
 	s = strings.ToLower(s)
 	return s == "with"
@@ -269,6 +286,7 @@ func isWith(s string) bool {
 // parseWithExpr parses `WITH (withArgExpr...) expr`.
 func (p *parser) parseWithExpr() (*withExpr, error) {
 	var we withExpr
+	start := p.lex.Pos.Start
 	if !isWith(p.lex.Token) {
 		return nil, fmt.Errorf("withExpr: unexpected token %q; want `WITH`", p.lex.Token)
 	}
@@ -312,11 +330,13 @@ end:
 		return nil, err
 	}
 	we.Expr = e
+	we.Pos = p.spanFrom(start)
 	return &we, nil
 }
 
 func (p *parser) parseWithArgExpr() (*withArgExpr, error) {
 	var wa withArgExpr
+	start := p.lex.Pos.Start
 	if !isIdentPrefix(p.lex.Token) {
 		return nil, fmt.Errorf(`withArgExpr: unexpected token %q; want "ident"`, p.lex.Token)
 	}
@@ -351,6 +371,7 @@ func (p *parser) parseWithArgExpr() (*withArgExpr, error) {
 		return nil, fmt.Errorf(`withArgExpr: cannot parse %q: %s`, wa.Name, err)
 	}
 	wa.Expr = e
+	wa.Pos = p.spanFrom(start)
 	return &wa, nil
 }
 
@@ -422,6 +443,7 @@ func (p *parser) parseExpr() (Expr, error) {
 				return nil, err
 			}
 		}
+		be.Pos = Span{Start: posOf(be.Left).Start, End: p.lex.LastEnd()}
 		e = balanceBinaryOp(&be)
 	}
 }
@@ -440,7 +462,9 @@ func balanceBinaryOp(be *BinaryOpExpr) Expr {
 		return be
 	}
 	be.Left = bel.Right
+	be.Pos.Start = posOf(be.Left).Start
 	bel.Right = balanceBinaryOp(be)
+	bel.Pos.End = posOf(bel.Right).End
 	return bel
 }
 
@@ -489,6 +513,7 @@ func (p *parser) parseSingleExprWithoutRollupSuffix() (Expr, error) {
 		return p.parseMetricExpr()
 	case "-":
 		// Unary minus. Substitute `-expr` with `0 - expr`
+		start := p.lex.Pos.Start
 		if err := p.lex.Next(); err != nil {
 			return nil, err
 		}
@@ -499,9 +524,12 @@ func (p *parser) parseSingleExprWithoutRollupSuffix() (Expr, error) {
 		be := &BinaryOpExpr{
 			Op: "-",
 			Left: &NumberExpr{
-				N: 0,
+				N:          0,
+				SourceInfo: SourceInfo{Pos: Span{Start: start, End: start}},
 			},
-			Right: e,
+			Right:      e,
+			unary:      true,
+			SourceInfo: SourceInfo{Pos: p.spanFrom(start)},
 		}
 		return be, nil
 	case "+":
@@ -557,6 +585,7 @@ func (p *parser) parseFillModifier(be *BinaryOpExpr) (bool, error) {
 
 func (p *parser) parseFillValue() (*NumberExpr, error) {
 	neg := false
+	start := p.lex.Pos.Start
 	if p.lex.Token == "-" {
 		neg = true
 		if err := p.lex.Next(); err != nil {
@@ -570,6 +599,7 @@ func (p *parser) parseFillValue() (*NumberExpr, error) {
 	if neg {
 		ne.N = -ne.N
 		ne.s = "-" + ne.s
+		ne.Pos.Start = start
 	}
 	return ne, nil
 }
@@ -578,6 +608,7 @@ func (p *parser) parsePositiveNumberExpr() (*NumberExpr, error) {
 	if !isPositiveNumberPrefix(p.lex.Token) && !isInfOrNaN(p.lex.Token) {
 		return nil, fmt.Errorf(`positiveNumberExpr: unexpected token %q; want "number"`, p.lex.Token)
 	}
+	start := p.lex.Pos.Start
 	s := p.lex.Token
 	n, err := parsePositiveNumber(s)
 	if err != nil {
@@ -587,14 +618,19 @@ func (p *parser) parsePositiveNumberExpr() (*NumberExpr, error) {
 		return nil, err
 	}
 	ne := &NumberExpr{
-		N: n,
-		s: s,
+		N:          n,
+		s:          s,
+		SourceInfo: SourceInfo{Pos: p.spanFrom(start)},
 	}
 	return ne, nil
 }
 
 func (p *parser) parseStringExpr() (*StringExpr, error) {
 	var se StringExpr
+	start := p.lex.Pos.Start
+	defer func() {
+		se.Pos = p.spanFrom(start)
+	}()
 
 	for {
 		switch {
@@ -642,6 +678,7 @@ func (p *parser) parseParensExpr() (*parensExpr, error) {
 	if p.lex.Token != "(" {
 		return nil, fmt.Errorf(`parensExpr: unexpected token %q; want "("`, p.lex.Token)
 	}
+	start := p.lex.Pos.Start
 	var exprs []Expr
 	for {
 		if err := p.lex.Next(); err != nil {
@@ -674,8 +711,11 @@ func (p *parser) parseParensExpr() (*parensExpr, error) {
 			be.KeepMetricNames = true
 		}
 	}
-	pe := parensExpr(exprs)
-	return &pe, nil
+	pe := &parensExpr{
+		args:       exprs,
+		SourceInfo: SourceInfo{Pos: p.spanFrom(start)},
+	}
+	return pe, nil
 }
 
 func (p *parser) parseAggrFuncExpr() (*AggrFuncExpr, error) {
@@ -684,6 +724,10 @@ func (p *parser) parseAggrFuncExpr() (*AggrFuncExpr, error) {
 	}
 
 	var ae AggrFuncExpr
+	start := p.lex.Pos.Start
+	defer func() {
+		ae.Pos = p.spanFrom(start)
+	}()
 	ae.Name = strings.ToLower(unescapeIdent(p.lex.Token))
 	if err := p.lex.Next(); err != nil {
 		return nil, err
@@ -775,7 +819,8 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 			rse, rok := right.(*StringExpr)
 			if lok && rok {
 				se := &StringExpr{
-					S: lse.S + rse.S,
+					S:          lse.S + rse.S,
+					SourceInfo: SourceInfo{Pos: t.Pos},
 				}
 				return se, nil
 			}
@@ -786,8 +831,12 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		be.GroupModifier.Args = groupModifierArgs
 		be.JoinModifier.Args = joinModifierArgs
 		be.JoinModifierPrefix = joinModifierPrefix
-		pe := parensExpr{&be}
-		return &pe, nil
+		pe := &parensExpr{
+			args:       []Expr{&be},
+			SourceInfo: SourceInfo{Pos: be.Pos},
+			synthetic:  true,
+		}
+		return pe, nil
 	case *FuncExpr:
 		args, err := expandWithArgs(was, t.Args)
 		if err != nil {
@@ -795,7 +844,11 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		}
 		wa := getWithArgExpr(was, t.Name)
 		if wa != nil {
-			return expandWithExprExt(was, wa, args)
+			eNew, err := expandWithExprExt(was, wa, args)
+			if err != nil {
+				return nil, err
+			}
+			return relocateTemplateExpr(eNew, wa, t.Pos), nil
 		}
 		fe := *t
 		fe.Args = args
@@ -807,7 +860,11 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		}
 		wa := getWithArgExpr(was, t.Name)
 		if wa != nil {
-			return expandWithExprExt(was, wa, args)
+			eNew, err := expandWithExprExt(was, wa, args)
+			if err != nil {
+				return nil, err
+			}
+			return relocateTemplateExpr(eNew, wa, t.Pos), nil
 		}
 		modifierArgs, err := expandModifierArgs(was, t.Modifier.Args)
 		if err != nil {
@@ -818,11 +875,12 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		ae.Modifier.Args = modifierArgs
 		return &ae, nil
 	case *parensExpr:
-		exprs, err := expandWithArgs(was, *t)
+		exprs, err := expandWithArgs(was, t.args)
 		if err != nil {
 			return nil, err
 		}
-		pe := parensExpr(exprs)
+		pe := *t
+		pe.args = exprs
 		return &pe, nil
 	case *StringExpr:
 		if len(t.S) > 0 {
@@ -857,7 +915,8 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 			b = append(b, seSrc.S...)
 		}
 		se := &StringExpr{
-			S: string(b),
+			S:          string(b),
+			SourceInfo: SourceInfo{Pos: t.Pos},
 		}
 		return se, nil
 	case *RollupExpr:
@@ -908,6 +967,7 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 			// Find out if all or-subclauses that specify a metric name agree on one
 			// NB: cannot use a guard value because metric names can be any string
 			commonMetricName := ""
+			var commonMetricPos Span
 			haveCommonMetric := true
 			for _, lfes := range t.labelFilterss {
 				localMetricName := ""
@@ -922,8 +982,11 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 							// but value is nil
 							if lfe.IsPossibleMetricName {
 								var err error
-								if lfsNew, localMetricName, err = checkAndPrependMetricNameFilter(lfsNew, localMetricName, lfe.Label); err != nil {
+								if lfsNew, localMetricName, err = checkAndPrependMetricNameFilter(lfsNew, localMetricName, lfe.Label, lfe.pos); err != nil {
 									return nil, err
+								}
+								if commonMetricPos.IsZero() {
+									commonMetricPos = lfe.pos
 								}
 								continue
 							}
@@ -933,6 +996,7 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 						if err != nil {
 							return nil, err
 						}
+						eNew = relocateTemplateExpr(eNew, wa, lfe.pos)
 						wme, ok := eNew.(*MetricExpr)
 						if !ok || wme.getMetricName() != "" {
 							return nil, fmt.Errorf("WITH template %q inside %q must be {...}; got %q",
@@ -961,13 +1025,17 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 					lfeNew.Value = se.(*StringExpr)
 					lfeNew.IsNegative = lfe.IsNegative
 					lfeNew.IsRegexp = lfe.IsRegexp
+					lfeNew.pos = lfe.pos
 					lf, err := lfeNew.toLabelFilter()
 					if err != nil {
 						return nil, err
 					}
 					if lf.isMetricNameFilter() {
-						if lfsNew, localMetricName, err = checkAndPrependMetricNameFilter(lfsNew, localMetricName, lf.Value); err != nil {
+						if lfsNew, localMetricName, err = checkAndPrependMetricNameFilter(lfsNew, localMetricName, lf.Value, lf.Pos); err != nil {
 							return nil, err
+						}
+						if commonMetricPos.IsZero() {
+							commonMetricPos = lf.Pos
 						}
 					} else {
 						lfsNew = append(lfsNew, *lf)
@@ -995,10 +1063,11 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 						}
 					}
 					if !haveNameClause {
-						me.LabelFilterss[i] = prependMetricNameFilter(lfs, commonMetricName)
+						me.LabelFilterss[i] = prependMetricNameFilter(lfs, commonMetricName, commonMetricPos)
 					}
 				}
 			}
+			me.SourceInfo = t.SourceInfo
 			t = &me
 		}
 		metricName := t.getMetricName()
@@ -1013,6 +1082,7 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		if err != nil {
 			return nil, err
 		}
+		eNew = relocateTemplateExpr(eNew, wa, t.Pos)
 		var wme *MetricExpr
 		re, _ := eNew.(*RollupExpr)
 		if re != nil {
@@ -1060,6 +1130,11 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		}
 		me := &MetricExpr{
 			LabelFilterss: lfssNew,
+			SourceInfo:    t.SourceInfo,
+		}
+		if t.isOnlyMetricName() {
+			// The whole expression comes from the template.
+			me.SourceInfo = wme.SourceInfo
 		}
 		if re == nil {
 			return me, nil
@@ -1072,17 +1147,18 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 	}
 }
 
-func checkAndPrependMetricNameFilter(lfs []LabelFilter, metricName string, newMetricName string) ([]LabelFilter, string, error) {
+func checkAndPrependMetricNameFilter(lfs []LabelFilter, metricName string, newMetricName string, pos Span) ([]LabelFilter, string, error) {
 	if metricName != "" && metricName != newMetricName {
 		return nil, "", fmt.Errorf("parse error: metric name must not be set twice: %q or %q", metricName, newMetricName)
 	}
-	return prependMetricNameFilter(lfs, newMetricName), newMetricName, nil
+	return prependMetricNameFilter(lfs, newMetricName, pos), newMetricName, nil
 }
 
-func prependMetricNameFilter(lfs []LabelFilter, metricName string) []LabelFilter {
+func prependMetricNameFilter(lfs []LabelFilter, metricName string, pos Span) []LabelFilter {
 	var lf LabelFilter
 	lf.Label = "__name__"
 	lf.Value = metricName
+	lf.Pos = pos
 	return append([]LabelFilter{lf}, lfs...)
 }
 
@@ -1113,6 +1189,7 @@ func expandDuration(was []*withArgExpr, d *DurationExpr) (*DurationExpr, error) 
 	if err != nil {
 		return nil, err
 	}
+	e = relocateTemplateExpr(e, wa, d.Pos)
 	switch t := e.(type) {
 	case *DurationExpr:
 		if t.needsParsing {
@@ -1121,7 +1198,12 @@ func expandDuration(was []*withArgExpr, d *DurationExpr) (*DurationExpr, error) 
 		return t, nil
 	case *NumberExpr:
 		// Convert number of seconds to DurationExpr
-		return newDurationExpr(t.s)
+		de, err := newDurationExpr(t.s)
+		if err != nil {
+			return nil, err
+		}
+		de.SourceInfo = t.SourceInfo
+		return de, nil
 	default:
 		return nil, fmt.Errorf("unexpected value for WITH template %q; got %s; want duration", d.s, e.AppendString(nil))
 	}
@@ -1155,7 +1237,7 @@ func expandModifierArgs(was []*withArgExpr, args []string) ([]string, error) {
 		}
 		pe, ok := wa.Expr.(*parensExpr)
 		if ok {
-			for _, pArg := range *pe {
+			for _, pArg := range pe.args {
 				me, ok := pArg.(*MetricExpr)
 				if !ok || !me.isOnlyMetricName() {
 					return nil, fmt.Errorf("cannot use %q instead of %q in %s", pe.AppendString(nil), arg, args)
@@ -1199,8 +1281,9 @@ func expandWithExprExt(was []*withArgExpr, wa *withArgExpr, args []Expr) (Expr, 
 	}
 	for i, arg := range args {
 		wasNew = append(wasNew, &withArgExpr{
-			Name: wa.Args[i],
-			Expr: arg,
+			Name:  wa.Args[i],
+			Expr:  arg,
+			isArg: true,
 		})
 	}
 	return expandWithExpr(wasNew, wa.Expr)
@@ -1263,6 +1346,7 @@ func (p *parser) parseFuncExpr() (*FuncExpr, error) {
 	}
 
 	var fe FuncExpr
+	start := p.lex.Pos.Start
 	fe.Name = unescapeIdent(p.lex.Token)
 	if err := p.lex.Next(); err != nil {
 		return nil, err
@@ -1281,6 +1365,7 @@ func (p *parser) parseFuncExpr() (*FuncExpr, error) {
 			return nil, err
 		}
 	}
+	fe.Pos = p.spanFrom(start)
 	return &fe, nil
 }
 
@@ -1295,12 +1380,14 @@ func (p *parser) parseModifierExpr(me *ModifierExpr, allowStar bool) error {
 	}
 
 	me.Op = strings.ToLower(p.lex.Token)
+	start := p.lex.Pos.Start
 
 	if err := p.lex.Next(); err != nil {
 		return err
 	}
 	if isBinaryOpJoinModifier(me.Op) && p.lex.Token != "(" {
 		// join modifier may miss ident list.
+		me.Pos = p.spanFrom(start)
 		return nil
 	}
 	args, err := p.parseIdentList(allowStar)
@@ -1308,6 +1395,7 @@ func (p *parser) parseModifierExpr(me *ModifierExpr, allowStar bool) error {
 		return fmt.Errorf("ModifierExpr: %w", err)
 	}
 	me.Args = args
+	me.Pos = p.spanFrom(start)
 	return nil
 }
 
@@ -1484,6 +1572,7 @@ func isQuotedString(s string) bool {
 
 func (p *parser) parseLabelFilterExpr() (*labelFilterExpr, error) {
 	var isPossibleMetricName bool
+	start := p.lex.Pos.Start
 	if isQuotedString(p.lex.Token) {
 		// strip quotes
 		p.lex.Token = p.lex.Token[1 : len(p.lex.Token)-1]
@@ -1522,6 +1611,7 @@ func (p *parser) parseLabelFilterExpr() (*labelFilterExpr, error) {
 		// in our expanding of the with statements
 		// https://github.com/prometheus/proposals/blob/main/proposals/2023-08-21-utf8.md
 		lfe.IsPossibleMetricName = isPossibleMetricName
+		lfe.pos = p.spanFrom(start)
 
 		return &lfe, nil
 	default:
@@ -1536,6 +1626,7 @@ func (p *parser) parseLabelFilterExpr() (*labelFilterExpr, error) {
 		return nil, err
 	}
 	lfe.Value = se
+	lfe.pos = p.spanFrom(start)
 	return &lfe, nil
 }
 
@@ -1552,6 +1643,8 @@ type labelFilterExpr struct {
 	IsRegexp             bool
 	IsNegative           bool
 	IsPossibleMetricName bool
+
+	pos Span
 }
 
 func (lfe *labelFilterExpr) AppendString(dst []byte) []byte {
@@ -1584,6 +1677,7 @@ func (lfe *labelFilterExpr) toLabelFilter() (*LabelFilter, error) {
 	lf.Value = lfe.Value.S
 	lf.IsRegexp = lfe.IsRegexp
 	lf.IsNegative = lfe.IsNegative
+	lf.Pos = lfe.pos
 	if !lf.IsRegexp {
 		return &lf, nil
 	}
@@ -1623,6 +1717,7 @@ func (p *parser) parseWindowAndStep() (*DurationExpr, *DurationExpr, bool, error
 	if strings.HasPrefix(p.lex.Token, ":") {
 		// Parse step
 		p.lex.Token = p.lex.Token[1:]
+		p.lex.Pos.Start++
 		if p.lex.Token == "" {
 			if err := p.lex.Next(); err != nil {
 				return nil, nil, false, err
@@ -1677,6 +1772,7 @@ func (p *parser) parseOffset() (*DurationExpr, error) {
 }
 
 func (p *parser) parseDuration() (*DurationExpr, error) {
+	start := p.lex.Pos.Start
 	isNegative := p.lex.Token == "-"
 	if isNegative {
 		if err := p.lex.Next(); err != nil {
@@ -1689,12 +1785,14 @@ func (p *parser) parseDuration() (*DurationExpr, error) {
 	}
 	if isNegative {
 		de.s = "-" + de.s
+		de.Pos.Start = start
 	}
 	return de, nil
 }
 
 func (p *parser) parsePositiveDuration() (*DurationExpr, error) {
 	s := p.lex.Token
+	start := p.lex.Pos.Start
 	if isIdentPrefix(s) {
 		n := strings.IndexByte(s, ':')
 		if n >= 0 {
@@ -1707,6 +1805,7 @@ func (p *parser) parsePositiveDuration() (*DurationExpr, error) {
 		de := &DurationExpr{
 			s:            s,
 			needsParsing: true,
+			SourceInfo:   SourceInfo{Pos: p.spanFrom(start)},
 		}
 		return de, nil
 	}
@@ -1727,7 +1826,12 @@ func (p *parser) parsePositiveDuration() (*DurationExpr, error) {
 	if s == "$__interval" {
 		s = "1i"
 	}
-	return newDurationExpr(s)
+	de, err := newDurationExpr(s)
+	if err != nil {
+		return nil, err
+	}
+	de.Pos = p.spanFrom(start)
+	return de, nil
 }
 
 // DurationExpr contains the duration
@@ -1739,6 +1843,8 @@ type DurationExpr struct {
 
 	// needsParsing is set to true if s isn't parsed yet with expandWithExpr()
 	needsParsing bool
+
+	SourceInfo
 }
 
 func newDurationExpr(s string) (*DurationExpr, error) {
@@ -1825,18 +1931,22 @@ func (p *parser) parseIdentExpr() (Expr, error) {
 func (p *parser) parseMetricExpr() (*MetricExpr, error) {
 	var mf *labelFilterExpr
 	var me MetricExpr
+	start := p.lex.Pos.Start
 	if isIdentPrefix(p.lex.Token) {
 		mf = &labelFilterExpr{
 			Label: "__name__",
 			Value: &StringExpr{
-				tokens: []string{strconv.Quote(unescapeIdent(p.lex.Token))},
+				tokens:     []string{strconv.Quote(unescapeIdent(p.lex.Token))},
+				SourceInfo: SourceInfo{Pos: p.lex.Pos},
 			},
+			pos: p.lex.Pos,
 		}
 		if err := p.lex.Next(); err != nil {
 			return nil, err
 		}
 		if p.lex.Token != "{" {
 			me.labelFilterss = append(me.labelFilterss, []*labelFilterExpr{mf})
+			me.Pos = p.spanFrom(start)
 			return &me, nil
 		}
 	}
@@ -1845,12 +1955,16 @@ func (p *parser) parseMetricExpr() (*MetricExpr, error) {
 		return nil, err
 	}
 	me.labelFilterss = append(me.labelFilterss, lfess...)
+	me.Pos = p.spanFrom(start)
 	return &me, nil
 }
 
 func (p *parser) parseRollupExpr(arg Expr) (Expr, error) {
 	var re RollupExpr
 	re.Expr = arg
+	defer func() {
+		re.Pos = Span{Start: posOf(arg).Start, End: p.lex.LastEnd()}
+	}()
 	if p.lex.Token == "[" {
 		window, step, inheritStep, err := p.parseWindowAndStep()
 		if err != nil {
@@ -1898,6 +2012,8 @@ type StringExpr struct {
 	// Composite string has non-empty tokens.
 	// They must be converted into S by expandWithExpr.
 	tokens []string
+
+	SourceInfo
 }
 
 // AppendString appends string representation of se to dst and returns the result.
@@ -1921,6 +2037,15 @@ type NumberExpr struct {
 
 	// s contains the original string representation for N.
 	s string
+
+	SourceInfo
+}
+
+// Text returns the original string representation of ne.
+//
+// It returns an empty string if ne wasn't parsed from a number literal, e.g. if it is a result of constant folding.
+func (ne *NumberExpr) Text() string {
+	return ne.s
 }
 
 // AppendString appends string representation of ne to dst and returns the result.
@@ -1934,11 +2059,18 @@ func (ne *NumberExpr) AppendString(dst []byte) []byte {
 // parensExpr represents `(...)`.
 //
 // It isn't exported.
-type parensExpr []Expr
+type parensExpr struct {
+	args []Expr
+
+	SourceInfo
+
+	// synthetic is set to true for parens added during WITH templates expansion.
+	synthetic bool
+}
 
 // AppendString appends string representation of pe to dst and returns the result.
-func (pe parensExpr) AppendString(dst []byte) []byte {
-	return appendStringArgListExpr(dst, pe)
+func (pe *parensExpr) AppendString(dst []byte) []byte {
+	return appendStringArgListExpr(dst, pe.args)
 }
 
 // BinaryOpExpr represents binary operation.
@@ -1975,6 +2107,18 @@ type BinaryOpExpr struct {
 
 	// Right contains right arg for the `left op right` epxression.
 	Right Expr
+
+	SourceInfo
+
+	// unary is set to true for `0 - expr` produced from unary minus `-expr`.
+	unary bool
+}
+
+// IsUnaryMinus returns true if be was produced from `-expr` unary minus expression.
+//
+// In this case be.Left contains zero NumberExpr.
+func (be *BinaryOpExpr) IsUnaryMinus() bool {
+	return be.unary
 }
 
 // AppendString appends string representation of be to dst and returns the result.
@@ -2100,6 +2244,9 @@ type ModifierExpr struct {
 
 	// Args contains modifier args from parens.
 	Args []string
+
+	// Pos is the position of the modifier in the parsed query.
+	Pos Span
 }
 
 // AppendString appends string representation of me to dst and returns the result.
@@ -2142,6 +2289,8 @@ type FuncExpr struct {
 
 	// If KeepMetricNames is set to true, then the function should keep metric names.
 	KeepMetricNames bool
+
+	SourceInfo
 }
 
 // AppendString appends string representation of fe to dst and returns the result.
@@ -2174,6 +2323,8 @@ type AggrFuncExpr struct {
 	//
 	// Example: `sum(...) by (...) limit 10` would return maximum 10 time series.
 	Limit int
+
+	SourceInfo
 }
 
 // AppendString appends string representation of ae to dst and returns the result.
@@ -2201,6 +2352,8 @@ func (ae *AggrFuncExpr) appendModifiers(dst []byte) []byte {
 type withExpr struct {
 	Was  []*withArgExpr
 	Expr Expr
+
+	SourceInfo
 }
 
 // AppendString appends string representation of we to dst and returns the result.
@@ -2224,6 +2377,14 @@ type withArgExpr struct {
 	Name string
 	Args []string
 	Expr Expr
+
+	SourceInfo
+
+	// isDefault is set to true for built-in templates.
+	isDefault bool
+
+	// isArg is set to true for template args bound during template expansion.
+	isArg bool
 }
 
 // AppendString appends string representation of wa to dst and returns the result.
@@ -2274,6 +2435,8 @@ type RollupExpr struct {
 	// For example, `foo @ end()` or `bar[5m] @ 12345`
 	// See https://prometheus.io/docs/prometheus/latest/querying/basics/#modifier
 	At Expr
+
+	SourceInfo
 }
 
 // ForSubquery returns true if re represents subquery.
@@ -2348,6 +2511,11 @@ type LabelFilter struct {
 
 	// IsRegexp represents whether the filter is regesp, i.e. `=~` or `!~`.
 	IsRegexp bool
+
+	// Pos is the position of the filter in the parsed query.
+	//
+	// For the metric name filter it points to the metric name.
+	Pos Span
 }
 
 // AppendString appends string representation of me to dst and returns the result.
@@ -2395,6 +2563,8 @@ type MetricExpr struct {
 	//
 	// labelFilters must be expanded to LabelFilters by expandWithExpr.
 	labelFilterss [][]*labelFilterExpr
+
+	SourceInfo
 }
 
 func appendLabelFilterss(dst []byte, lfss [][]*labelFilterExpr) []byte {
