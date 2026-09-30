@@ -366,4 +366,6 @@ func TestSourceParseError(t *testing.T) {
 	f(`foo{bar=}`, `}`)
 	f(`foo ) bar`, `) bar`)
 	f(`foo + $bar`, `$bar`)
+	f(`foo{a="b", c=~"("}`, `c=~"("`)
+	f(`WITH (x = {a=~"("}) foo{x}`, `a=~"("`)
 }

@@ -1,6 +1,7 @@
 package metricsql
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,7 +26,12 @@ func Parse(s string) (Expr, error) {
 	// Expand `WITH` expressions.
 	was := getDefaultWithArgExprs()
 	if e, err = expandWithExpr(was, e); err != nil {
-		return nil, newParseError(Span{Start: 0, End: len(s)}, `cannot expand WITH expressions: %s`, err)
+		pos := Span{Start: 0, End: len(s)}
+		var pe *ParseError
+		if errors.As(err, &pe) && pe.Pos.Start >= 0 && pe.Pos.Start < pe.Pos.End && pe.Pos.End <= len(s) {
+			pos = pe.Pos
+		}
+		return nil, newParseError(pos, `cannot expand WITH expressions: %s`, err)
 	}
 	e = removeParensExpr(e)
 	e = simplifyConstants(e)
@@ -1684,7 +1690,7 @@ func (lfe *labelFilterExpr) toLabelFilter() (*LabelFilter, error) {
 
 	// Verify regexp.
 	if _, err := CompileRegexpAnchored(lfe.Value.S); err != nil {
-		return nil, fmt.Errorf("invalid regexp in %s=%q: %s", lf.Label, lf.Value, err)
+		return nil, newParseError(lfe.pos, "invalid regexp in %s=%q: %s", lf.Label, lf.Value, err)
 	}
 	return &lf, nil
 }
