@@ -76,6 +76,32 @@ gh pr create --repo AnatoliiVolchkov/metricsql --base main --head "$BRANCH" \
   --body "Merge of upstream/master into main."
 ```
 
+## Automated sync
+
+`.github/workflows/upstream-sync.yml` runs `.github/scripts/upstream-sync.sh` (identical
+to the copy in AnatoliiVolchkov/pint) every Monday and on demand:
+
+```sh
+gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql
+gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql -f dry_run=true
+```
+
+It counts `upstream/master` commits missing from `main` and exits successfully if there
+are none. Otherwise it merges them into `sync/upstream-YYYYMMDD`, runs `go vet`,
+`go test` and `go test -race`, pushes the branch and opens a pull request against `main`.
+On conflicts it lists the conflicting files, opens an issue with resolution commands and
+fails without pushing. It never pushes to `main`.
+
+The optional `SYNC_TOKEN` secret (fine-grained PAT on `AnatoliiVolchkov/metricsql` with Contents,
+Pull requests, Issues and Workflows read/write) is needed when upstream changes files under
+`.github/workflows`; otherwise `GITHUB_TOKEN` is used. Pull requests opened by `GITHUB_TOKEN`
+need "Allow GitHub Actions to create and approve pull requests":
+
+```sh
+gh api -X PUT repos/AnatoliiVolchkov/metricsql/actions/permissions/workflow \
+  -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+```
+
 ## Releasing a version for pint
 
 pint pins an exact tag. Tags use the upstream version our `main` is based on plus a
