@@ -1,6 +1,7 @@
 package metricsql
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -105,6 +106,18 @@ func newParseError(pos Span, format string, args ...any) *ParseError {
 		Msg: fmt.Sprintf(format, args...),
 		Pos: pos,
 	}
+}
+
+// withErrorPos attaches pos to err unless err already carries a position.
+//
+// It is used for errors returned while expanding a WITH template call, so the error
+// points at the call instead of the whole query.
+func withErrorPos(err error, pos Span) error {
+	var pe *ParseError
+	if errors.As(err, &pe) || pos.Start < 0 || pos.IsZero() {
+		return err
+	}
+	return newParseError(pos, "%s", err)
 }
 
 // defaultTemplateBase is the base offset used for positions inside built-in WITH templates.

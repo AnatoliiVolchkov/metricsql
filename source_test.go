@@ -368,4 +368,10 @@ func TestSourceParseError(t *testing.T) {
 	f(`foo + $bar`, `$bar`)
 	f(`foo{a="b", c=~"("}`, `c=~"("`)
 	f(`WITH (x = {a=~"("}) foo{x}`, `a=~"("`)
+	// Wrong number of template arguments points at the call.
+	f(`WITH (f(x) = rate(x[5m])) f(foo, bar)`, `f(foo, bar)`)
+	f(`WITH (f(x) = rate(x[5m])) sum(foo) + f()`, `f()`)
+	f(`WITH (s(x) = sum(x)) s(foo) / s(foo, bar)`, `s(foo, bar)`)
+	// A bad call inside a template body points at the call in the body.
+	f(`WITH (f(x) = rate(x[5m]), g(y) = f(y, y)) g(foo)`, `f(y, y)`)
 }

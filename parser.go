@@ -852,7 +852,7 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		if wa != nil {
 			eNew, err := expandWithExprExt(was, wa, args)
 			if err != nil {
-				return nil, err
+				return nil, withErrorPos(err, t.Pos)
 			}
 			return relocateTemplateExpr(eNew, wa, t.Pos), nil
 		}
@@ -868,7 +868,7 @@ func expandWithExpr(was []*withArgExpr, e Expr) (Expr, error) {
 		if wa != nil {
 			eNew, err := expandWithExprExt(was, wa, args)
 			if err != nil {
-				return nil, err
+				return nil, withErrorPos(err, t.Pos)
 			}
 			return relocateTemplateExpr(eNew, wa, t.Pos), nil
 		}
