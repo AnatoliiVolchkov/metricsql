@@ -1,0 +1,2 @@
+go test fuzz v1
+string("0+0YKEEP_metriC_nAmes%0")
