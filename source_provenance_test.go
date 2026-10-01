@@ -118,7 +118,7 @@ func usesBuiltinTemplate(q string) bool {
 	lex.Init(q)
 	prev := ""
 	for lex.Next() == nil && !isEOF(lex.Token) {
-		if lex.Token == "(" && names[strings.ToLower(prev)] {
+		if lex.Token == "(" && names[strings.ToLower(unescapeIdent(prev))] {
 			return true
 		}
 		prev = lex.Token
