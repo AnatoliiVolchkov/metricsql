@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go:
+          - go.mod
+          - stable
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          show-progress: false
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
+          go-version: ${{ matrix.go == 'stable' && 'stable' || '' }}
+          cache: false
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Test with race detector
+        run: go test -count=1 -race ./...
+
+      - name: Fuzz smoke test
+        run: go test -run '^$' -fuzz=FuzzParseSource -fuzztime=30s .
+
+      - name: Upload coverage
+        if: matrix.go == 'go.mod'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.txt
+
+      - name: Upload fuzz failures
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-failures-${{ matrix.go }}
+          path: testdata/fuzz
+          if-no-files-found: ignore
+
+  upstream-parity:
+    name: Upstream test parity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          show-progress: false
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Our changes must not alter upstream behavior: run upstream's own tests, taken
+      # unchanged from the upstream commit our main is based on, against our code.
+      - name: Run upstream tests unchanged
+        run: |
+          git remote add upstream https://github.com/VictoriaMetrics/metricsql.git
+          git fetch --no-tags upstream master
+          BASE=$(git merge-base HEAD upstream/master)
+          echo "Upstream base: $BASE"
+          tests=$(git ls-tree --name-only "$BASE" | grep '_test\.go$')
+          echo "Upstream test files:" $tests
+          # Fail if any upstream test file was modified on our side.
+          git diff --exit-code "$BASE" HEAD -- $tests
+          # Run only upstream test files: hide ours, restore upstream's.
+          mkdir -p /tmp/ours
+          for f in $(git ls-files '*_test.go'); do
+            if ! echo "$tests" | grep -qx "$f"; then mv "$f" /tmp/ours/; fi
+          done
+          git checkout "$BASE" -- $tests
+          go vet ./...
+          if ! go test -count=1 -v ./... > upstream-tests.log 2>&1; then
+            cat upstream-tests.log
+            exit 1
+          fi
+          grep -E '^(ok|FAIL)' upstream-tests.log
+          echo "Upstream tests run: $(grep -c '^=== RUN' upstream-tests.log)"
