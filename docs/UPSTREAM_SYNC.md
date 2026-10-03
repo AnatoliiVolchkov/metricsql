@@ -33,21 +33,30 @@ git fetch upstream master --tags
 - `main` is our product branch: upstream history plus our commits, joined by merge
   commits from upstream syncs. Never rebase, squash or force-push it.
 - A local `master` branch may track `upstream/master` for convenience; it is not pushed.
-- Upstream changes come in through `sync/upstream-YYYYMMDD` branches and pull requests,
+- Upstream changes come in through `sync/upstream-<tag>` branches and pull requests,
   merged with a merge commit.
+- Only stable upstream releases are merged: tags matching `vX.Y.Z`, never the head of
+  upstream `master`. Upstream tags releases on `master`, so merging one release after
+  another is an ordinary merge. Upstream tags are fetched into `refs/upstream-tags/*` so
+  they never mix with our `-pint.N` tags. To take a single upstream fix before it is
+  released, cherry-pick it (`git cherry-pick -x <sha>`) in a pull request.
 
 ## Manual sync procedure
 
 ```sh
 git switch main
 git pull --ff-only origin main
-git fetch upstream master --tags
+git fetch --no-tags --force upstream '+refs/tags/*:refs/upstream-tags/*'
 
-git rev-list --count main..upstream/master    # 0 means nothing to sync
+# Newest stable upstream release:
+TAG=$(git for-each-ref --sort=-version:refname --format='%(refname:lstrip=2)' refs/upstream-tags/ \
+  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
 
-BRANCH=sync/upstream-$(date -u +%Y%m%d)
+git rev-list --count main..refs/upstream-tags/$TAG    # 0 means nothing to sync
+
+BRANCH=sync/upstream-$TAG
 git switch -c "$BRANCH" main
-git merge --no-ff upstream/master -m "Merge upstream VictoriaMetrics/metricsql $(git rev-parse --short upstream/master)"
+git merge --no-ff refs/upstream-tags/$TAG -m "Merge upstream release $TAG into main"
 ```
 
 On conflicts list the files with `git diff --name-only --diff-filter=U`. Conflicts are
@@ -64,7 +73,7 @@ go test -race ./...
 go test -run '^$' -fuzz=FuzzParseSource -fuzztime=30s .
 
 # Upstream parity: upstream's own tests, unchanged, must pass against our code.
-UPSTREAM=$(git rev-parse upstream/master)
+UPSTREAM=$(git rev-parse "refs/upstream-tags/$TAG^{commit}")
 git diff --quiet "$UPSTREAM" HEAD -- $(git ls-tree --name-only "$UPSTREAM" | grep '_test.go$') \
   && echo "upstream test files are unchanged"
 ```
@@ -72,8 +81,8 @@ git diff --quiet "$UPSTREAM" HEAD -- $(git ls-tree --name-only "$UPSTREAM" | gre
 ```sh
 git push -u origin "$BRANCH"
 gh pr create --repo AnatoliiVolchkov/metricsql --base main --head "$BRANCH" \
-  --title "Sync with upstream VictoriaMetrics/metricsql $(git rev-parse --short upstream/master)" \
-  --body "Merge of upstream/master into main."
+  --title "Sync with upstream release $TAG" \
+  --body "Merge of upstream VictoriaMetrics/metricsql $TAG into main."
 ```
 
 ## Automated sync
@@ -82,12 +91,15 @@ gh pr create --repo AnatoliiVolchkov/metricsql --base main --head "$BRANCH" \
 to the copy in AnatoliiVolchkov/pint) every Monday and on demand:
 
 ```sh
-gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql
+gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql                  # newest stable release
 gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql -f dry_run=true
+gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql -f tag=v0.87.6   # a specific release
+gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql -f mode=branch   # head of upstream master (exception)
 ```
 
-It counts `upstream/master` commits missing from `main` and exits successfully if there
-are none. Otherwise it merges them into `sync/upstream-YYYYMMDD`, runs `go vet`,
+It picks the newest stable upstream release tag (or the `tag` input), counts its commits
+missing from `main` and exits successfully if there are none, so runs between upstream
+releases are no-ops. Otherwise it merges the release into `sync/upstream-<tag>`, runs `go vet`,
 `go test` and `go test -race`, pushes the branch and opens a pull request against `main`.
 On conflicts it lists the conflicting files, opens an issue with resolution commands and
 fails without pushing. It never pushes to `main`.
@@ -109,7 +121,8 @@ pint pins an exact tag. Tags use the upstream version our `main` is based on plu
 
 ```sh
 git switch main && git pull --ff-only origin main
-BASE=$(git describe --tags --abbrev=0 --exclude '*-pint.*' upstream/master)
+# The newest upstream release merged into main, for example v0.87.5:
+BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' main)
 git tag -l "$BASE-pint.*"                 # pick the next N
 git tag -a "$BASE-pint.N" -m "metricsql $BASE with pint source positions"
 git push origin "$BASE-pint.N"
@@ -131,4 +144,4 @@ GOPRIVATE=github.com/AnatoliiVolchkov/* go mod tidy
 Upstream's `.github/workflows/main.yml` is kept unchanged and disabled with
 `gh workflow disable main.yml -R AnatoliiVolchkov/metricsql`; `ci.yml` runs the same tests plus
 race, vet, fuzz and upstream-parity checks. After each sync review new upstream
-workflows with `git diff --name-status <old> upstream/master -- .github/workflows`.
+workflows with `git diff --name-status <old> refs/upstream-tags/<tag> -- .github/workflows`.

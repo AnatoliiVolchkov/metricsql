@@ -7,6 +7,17 @@ on:
         description: Only detect and test-merge upstream changes, do not push or open a pull request.
         type: boolean
         default: false
+      tag:
+        description: Upstream release tag to merge, for example v0.89.0. Empty means the newest stable release.
+        type: string
+        default: ""
+      mode:
+        description: release merges an upstream release tag, branch merges the head of upstream master.
+        type: choice
+        options:
+          - release
+          - branch
+        default: release
   schedule:
     - cron: "17 4 * * 1"
 
@@ -42,6 +53,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           UPSTREAM_URL: https://github.com/VictoriaMetrics/metricsql.git
+          # Only stable upstream releases are merged by default, see docs/UPSTREAM_SYNC.md.
+          UPSTREAM_MODE: ${{ inputs.mode || 'release' }}
+          UPSTREAM_TAG: ${{ inputs.tag }}
           UPSTREAM_BRANCH: master
           BASE_BRANCH: main
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
