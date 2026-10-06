@@ -13,6 +13,9 @@ Fork additions (all additive, upstream behavior is unchanged):
 - structured parse errors with positions;
 - tests for the above in `source_test.go`.
 
+`.claude/` holds onboarding docs for AI coding agents. It is fork-only and never conflicts
+with upstream.
+
 ## Repository layout
 
 | Remote     | URL                                                  | Branch   |
