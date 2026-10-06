@@ -67,7 +67,10 @@ pint's converter (`../pint/internal/parser/metricsql/metricsql.go`) uses:
   `InheritStep`, `Offset`, `At`, `Pos`), `FuncExpr`, `AggrFuncExpr`, `BinaryOpExpr` (group and
   join modifiers, `KeepMetricNames`, fill values, `JoinModifierPrefix`), `NumberExpr`,
   `StringExpr` and `DurationExpr` (`AppendString`, `Duration`);
-- the helpers `IsRollupFunc`, `IsSupportedFunction` and `GetRollupArgIdx`.
+- the helpers `IsRollupFunc`, `IsSupportedFunction` and `GetRollupArgIdx`;
+- for the implicit conversion warning (`../pint/internal/checks/promql_syntax_metricsql.go`):
+  `IsLikelyInvalid`, `VisitAll`, `RollupExpr.ForSubquery`, `SourceInfo.Origin`, `OuterPos`
+  and `AppendString`.
 
 Renaming or changing any of these breaks pint. After a change here, run pint's tests
 through `go.work` before tagging:

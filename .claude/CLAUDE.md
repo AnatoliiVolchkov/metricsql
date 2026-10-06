@@ -107,4 +107,9 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
   `TestSourceQuotedAndMultibyte`.
 - **Upstream `IsLikelyInvalid`** (`utils.go`) flags implicit conversions such as
   `rate(sum(foo))`, `sum(foo)[5m]` and `rate(foo)[5m]`. It's upstream code, don't change it.
-  pint may reuse it, see `../pint/.claude/docs/backlog.md`.
+  - pint's `promql/syntax` check uses it to warn about the same queries VictoriaMetrics
+    rejects with `-search.disableImplicitConversion`.
+  - pint mirrors its rules to find positions, in `implicitConversions()` in
+    `../pint/internal/checks/promql_syntax_metricsql.go`.
+  - A pint test (`TestImplicitConversionsMatchIsLikelyInvalid`) fails if the two disagree. If
+    an upstream sync changes `IsLikelyInvalid`, update pint's mirror in the same pin bump.
