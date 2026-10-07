@@ -91,8 +91,12 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
   re-add the position tracking around it.
 - **New upstream expression types** need a `SourceInfo` and position tests. The provenance
   oracle (`TestSourceProvenanceUpstreamSuccessCorpus`) fails until they have them.
-- **State on 2026-10-06:** the base is upstream release v0.87.5 (`13e13ef`), which is still
+- **State on 2026-10-07:** the base is upstream release v0.87.5 (`13e13ef`), which is still
   upstream's newest release, and `main` has every upstream `master` commit.
+- **Release tag push:** since `bbb33ff`, the sync script also pushes the merged upstream
+  release tag. The `-pint.N` base comes from `git describe` against those tags, so a merged
+  release must have its tag here. AnatoliiVolchkov/pint uses the same script; its v0.89.0 sync on
+  2026-10-07 is described in `../pint/.claude/docs/release-and-sync.md`.
 - **Secrets:** none are configured. `SYNC_TOKEN` is missing, so a sync can't push upstream
   changes to `.github/workflows/*`.
 
