@@ -83,6 +83,9 @@ git diff --quiet "$UPSTREAM" HEAD -- $(git ls-tree --name-only "$UPSTREAM" | gre
 
 ```sh
 git push -u origin "$BRANCH"
+# Build versions are counted from the newest upstream release tag in this repository
+# (git describe), push the merged release tag too:
+git push origin "refs/upstream-tags/$TAG:refs/tags/$TAG"
 gh pr create --repo AnatoliiVolchkov/metricsql --base main --head "$BRANCH" \
   --title "Sync with upstream release $TAG" \
   --body "Merge of upstream VictoriaMetrics/metricsql $TAG into main."
@@ -103,7 +106,8 @@ gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql -f mode=branch  
 It picks the newest stable upstream release tag (or the `tag` input), counts its commits
 missing from `main` and exits successfully if there are none, so runs between upstream
 releases are no-ops. Otherwise it merges the release into `sync/upstream-<tag>`, runs `go vet`,
-`go test` and `go test -race`, pushes the branch and opens a pull request against `main`.
+`go test` and `go test -race`, pushes the branch and the upstream release tag (the base of
+`-pint.N` tags is taken from it with `git describe`) and opens a pull request against `main`.
 On conflicts it lists the conflicting files, opens an issue with resolution commands and
 fails without pushing. It never pushes to `main`.
 

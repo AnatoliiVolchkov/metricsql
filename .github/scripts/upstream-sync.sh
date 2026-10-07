@@ -65,6 +65,9 @@ release)
   BRANCH="sync/upstream-$UPSTREAM_TAG"
   FETCH_CMD="git fetch --no-tags upstream +refs/tags/$UPSTREAM_TAG:refs/upstream-tags/$UPSTREAM_TAG"
   MERGE_REF="refs/upstream-tags/$UPSTREAM_TAG"
+  # Versions of our builds are counted from the newest upstream release tag in this
+  # repository (git describe), so the merged release tag is pushed too.
+  TAG_PUSH_CMD="git push origin refs/upstream-tags/$UPSTREAM_TAG:refs/tags/$UPSTREAM_TAG"
   ;;
 branch)
   [ -n "$UPSTREAM_BRANCH" ] || fail "UPSTREAM_BRANCH must be set when UPSTREAM_MODE=branch"
@@ -74,6 +77,7 @@ branch)
   BRANCH="sync/upstream-$(date -u +%Y%m%d)"
   FETCH_CMD="git fetch upstream $UPSTREAM_BRANCH"
   MERGE_REF="upstream/$UPSTREAM_BRANCH"
+  TAG_PUSH_CMD=""
   ;;
 *)
   fail "UPSTREAM_MODE must be release or branch, got \`$UPSTREAM_MODE\`"
@@ -149,6 +153,7 @@ git diff --name-only --diff-filter=U
 git commit --no-edit
 $TEST_CMD
 git push -u origin $BRANCH
+$TAG_PUSH_CMD
 gh pr create --base $BASE_BRANCH --head $BRANCH
 \`\`\`
 See docs/UPSTREAM_SYNC.md.
@@ -181,6 +186,15 @@ if ! git push --force-with-lease origin "$BRANCH" 2>"$PUSH_ERR"; then
     open_issue "Upstream sync push refused: $UPSTREAM_LABEL" "Upstream $UPSTREAM_LABEL changes files under \`.github/workflows\`. GITHUB_TOKEN cannot push workflow changes; set the \`SYNC_TOKEN\` secret (fine-grained PAT with Contents, Pull requests, Issues and Workflows read/write on this repository) and re-run the Upstream sync workflow."
   fi
   exit 1
+fi
+
+if [ -n "$TAG_PUSH_CMD" ]; then
+  if git ls-remote --exit-code --tags origin "refs/tags/$UPSTREAM_TAG" >/dev/null 2>&1; then
+    summary "Upstream tag \`$UPSTREAM_TAG\` already exists in this repository."
+  else
+    $TAG_PUSH_CMD
+    summary "Pushed upstream tag \`$UPSTREAM_TAG\`, build versions are counted from it."
+  fi
 fi
 
 TITLE="Sync with upstream $UPSTREAM_LABEL"
