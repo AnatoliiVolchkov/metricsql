@@ -91,10 +91,11 @@ gh pr create --repo AnatoliiVolchkov/metricsql --base main --head "$BRANCH" \
   --body "Merge of upstream VictoriaMetrics/metricsql $TAG into main."
 ```
 
-## Automated sync
+## Sync workflow
 
 `.github/workflows/upstream-sync.yml` runs `.github/scripts/upstream-sync.sh` (identical
-to the copy in AnatoliiVolchkov/pint) every Monday and on demand:
+to the copy in AnatoliiVolchkov/pint) on demand only. It has no schedule: upstream releases are
+synced when someone decides to, by hand (see above) or with the workflow:
 
 ```sh
 gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql                  # newest stable release
