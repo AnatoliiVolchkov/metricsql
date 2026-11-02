@@ -64,10 +64,10 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
 
 ## Releasing a version for pint
 
-1. Merge the change to `main`.
+1. Merge the change to `master`.
 2. Tag it `<upstream base>-pint.N`, the next free N:
    ```sh
-   BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' main)   # v0.87.5
+   BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' master)   # v0.87.5
    git tag -l "$BASE-pint.*"
    git tag -a "$BASE-pint.N" -m "metricsql $BASE with pint source positions"
    git push origin "$BASE-pint.N"
@@ -92,7 +92,7 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
 - **New upstream expression types** need a `SourceInfo` and position tests. The provenance
   oracle (`TestSourceProvenanceUpstreamSuccessCorpus`) fails until they have them.
 - **State on 2026-10-07:** the base is upstream release v0.87.5 (`13e13ef`), which is still
-  upstream's newest release, and `main` has every upstream `master` commit.
+  upstream's newest release, and `master` had every upstream commit on that date.
 - **Release tag push:** since `067f7fa`, the sync script also pushes the merged upstream
   release tag. The `-pint.N` base comes from `git describe` against those tags, so a merged
   release must have its tag here. AnatoliiVolchkov/pint uses the same script; its v0.89.0 sync on

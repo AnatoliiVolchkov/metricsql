@@ -20,7 +20,7 @@ with upstream.
 
 | Remote     | URL                                                  | Branch   |
 |------------|------------------------------------------------------|----------|
-| `origin`   | `https://github.com/AnatoliiVolchkov/metricsql.git`  | `main`   |
+| `origin`   | `https://github.com/AnatoliiVolchkov/metricsql.git`  | `master` |
 | `upstream` | `https://github.com/VictoriaMetrics/metricsql.git`   | `master` |
 
 ```sh
@@ -33,9 +33,8 @@ git fetch upstream master --tags
 
 ## Branch model
 
-- `main` is our product branch: upstream history plus our commits, joined by merge
-  commits from upstream syncs. Never rebase, squash or force-push it.
-- A local `master` branch may track `upstream/master` for convenience; it is not pushed.
+- `master` is our product branch, named like upstream's: upstream history plus our commits,
+  joined by merge commits from upstream syncs. Never rebase, squash or force-push it.
 - Upstream changes come in through `sync/upstream-<tag>` branches and pull requests,
   merged with a merge commit.
 - Only stable upstream releases are merged: tags matching `vX.Y.Z`, never the head of
@@ -47,19 +46,19 @@ git fetch upstream master --tags
 ## Manual sync procedure
 
 ```sh
-git switch main
-git pull --ff-only origin main
+git switch master
+git pull --ff-only origin master
 git fetch --no-tags --force upstream '+refs/tags/*:refs/upstream-tags/*'
 
 # Newest stable upstream release:
 TAG=$(git for-each-ref --sort=-version:refname --format='%(refname:lstrip=2)' refs/upstream-tags/ \
   | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
 
-git rev-list --count main..refs/upstream-tags/$TAG    # 0 means nothing to sync
+git rev-list --count master..refs/upstream-tags/$TAG    # 0 means nothing to sync
 
 BRANCH=sync/upstream-$TAG
-git switch -c "$BRANCH" main
-git merge --no-ff refs/upstream-tags/$TAG -m "Merge upstream release $TAG into main"
+git switch -c "$BRANCH" master
+git merge --no-ff refs/upstream-tags/$TAG -m "Merge upstream release $TAG into master"
 ```
 
 On conflicts list the files with `git diff --name-only --diff-filter=U`. Conflicts are
@@ -86,9 +85,9 @@ git push -u origin "$BRANCH"
 # Build versions are counted from the newest upstream release tag in this repository
 # (git describe), push the merged release tag too:
 git push origin "refs/upstream-tags/$TAG:refs/tags/$TAG"
-gh pr create --repo AnatoliiVolchkov/metricsql --base main --head "$BRANCH" \
+gh pr create --repo AnatoliiVolchkov/metricsql --base master --head "$BRANCH" \
   --title "Sync with upstream release $TAG" \
-  --body "Merge of upstream VictoriaMetrics/metricsql $TAG into main."
+  --body "Merge of upstream VictoriaMetrics/metricsql $TAG into master."
 ```
 
 ## Sync workflow
@@ -105,12 +104,12 @@ gh workflow run upstream-sync.yml -R AnatoliiVolchkov/metricsql -f mode=branch  
 ```
 
 It picks the newest stable upstream release tag (or the `tag` input), counts its commits
-missing from `main` and exits successfully if there are none, so runs between upstream
+missing from `master` and exits successfully if there are none, so runs between upstream
 releases are no-ops. Otherwise it merges the release into `sync/upstream-<tag>`, runs `go vet`,
 `go test` and `go test -race`, pushes the branch and the upstream release tag (the base of
-`-pint.N` tags is taken from it with `git describe`) and opens a pull request against `main`.
+`-pint.N` tags is taken from it with `git describe`) and opens a pull request against `master`.
 On conflicts it lists the conflicting files, opens an issue with resolution commands and
-fails without pushing. It never pushes to `main`.
+fails without pushing. It never pushes to `master`.
 
 The optional `SYNC_TOKEN` secret (fine-grained PAT on `AnatoliiVolchkov/metricsql` with Contents,
 Pull requests, Issues and Workflows read/write) is needed when upstream changes files under
@@ -124,13 +123,13 @@ gh api -X PUT repos/AnatoliiVolchkov/metricsql/actions/permissions/workflow \
 
 ## Releasing a version for pint
 
-pint pins an exact tag. Tags use the upstream version our `main` is based on plus a
+pint pins an exact tag. Tags use the upstream version our `master` is based on plus a
 `-pint.N` suffix, for example `v0.87.5-pint.3`:
 
 ```sh
-git switch main && git pull --ff-only origin main
-# The newest upstream release merged into main, for example v0.87.5:
-BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' main)
+git switch master && git pull --ff-only origin master
+# The newest upstream release merged into master, for example v0.87.5:
+BASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' master)
 git tag -l "$BASE-pint.*"                 # pick the next N
 git tag -a "$BASE-pint.N" -m "metricsql $BASE with pint source positions"
 git push origin "$BASE-pint.N"
@@ -163,7 +162,7 @@ the upstream fork network, even after it is deleted. Before every push:
 - Scan them for secrets:
 
   ```sh
-  gitleaks git --redact --log-opts="origin/main..HEAD"
+  gitleaks git --redact --log-opts="origin/master..HEAD"
   ```
 
 gitleaks finds tokens and keys, not host names, so only reading the commits catches those.
