@@ -1,6 +1,6 @@
 # Upstream synchronization
 
-This repository (`github.com/AnatoliiVolchkov/metricsql`, private) is a source-aware fork of
+This repository (`github.com/AnatoliiVolchkov/metricsql`, public) is a source-aware fork of
 `github.com/VictoriaMetrics/metricsql`. It keeps the upstream module path
 `github.com/VictoriaMetrics/metricsql`, so consumers use it through a `replace`
 directive. Its only consumer is `github.com/AnatoliiVolchkov/pint`.
@@ -20,7 +20,7 @@ with upstream.
 
 | Remote     | URL                                                  | Branch   |
 |------------|------------------------------------------------------|----------|
-| `origin`   | `https://github.com/AnatoliiVolchkov/metricsql.git` (private) | `main`   |
+| `origin`   | `https://github.com/AnatoliiVolchkov/metricsql.git`  | `main`   |
 | `upstream` | `https://github.com/VictoriaMetrics/metricsql.git`   | `master` |
 
 ```sh
@@ -137,14 +137,13 @@ git push origin "$BASE-pint.N"
 ```
 
 Never move or delete a pushed tag: the Go checksum database records it.
-Versions `v0.87.5-pint.1` and `v0.87.5-pint.2` were published while the fork was public
-and are cached by `proxy.golang.org`; they must not be reused.
+Tags in this repository start at `v0.87.5-pint.3`; don't reuse lower numbers.
 
 Then in pint:
 
 ```sh
 go mod edit -replace github.com/VictoriaMetrics/metricsql=github.com/AnatoliiVolchkov/metricsql@<tag>
-GOPRIVATE=github.com/AnatoliiVolchkov/* go mod tidy
+go mod tidy
 ```
 
 ## Disabled upstream workflows
@@ -153,3 +152,18 @@ Upstream's `.github/workflows/main.yml` is kept unchanged and disabled with
 `gh workflow disable main.yml -R AnatoliiVolchkov/metricsql`; `ci.yml` runs the same tests plus
 race, vet, fuzz and upstream-parity checks. After each sync review new upstream
 workflows with `git diff --name-status <old> refs/upstream-tags/<tag> -- .github/workflows`.
+
+## Before pushing
+
+These repositories are public, and anything pushed to a fork stays reachable by SHA through
+the upstream fork network, even after it is deleted. Before every push:
+
+- Read the commits you are about to push. Real host names, addresses, cluster, tenant, team
+  and account names must not be in them.
+- Scan them for secrets:
+
+  ```sh
+  gitleaks git --redact --log-opts="origin/main..HEAD"
+  ```
+
+gitleaks finds tokens and keys, not host names, so only reading the commits catches those.
