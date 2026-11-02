@@ -1,6 +1,6 @@
 # metricsql fork with source positions, used by pint
 
-This repository is **AnatoliiVolchkov/metricsql** (private), a fork of
+This repository is **AnatoliiVolchkov/metricsql** (public), a fork of
 [VictoriaMetrics/metricsql](https://github.com/VictoriaMetrics/metricsql). It keeps the
 upstream module path `github.com/VictoriaMetrics/metricsql`.
 
@@ -12,7 +12,8 @@ upstream module path `github.com/VictoriaMetrics/metricsql`.
 
 In the local workspace (`<workspace>/`), pint lives next to this repository in
 `../pint`. Its `.claude/CLAUDE.md` and `.claude/docs/` cover the whole project: user rules,
-releases, VictoriaMetrics facts and the backlog. Read them too.
+releases, VictoriaMetrics facts and the backlog. Read them too, starting with "This
+repository is public": the same rules on internal names, accounts and pushing apply here.
 
 ## Rules from the user
 
@@ -72,8 +73,7 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
    git push origin "$BASE-pint.N"
    ```
    - The current tag is `v0.87.5-pint.3`.
-   - **Never reuse `-pint.1` or `-pint.2`.** They were public once and are cached forever by
-     proxy.golang.org.
+   - **Tags in this repository start at `-pint.3`.** Don't reuse lower numbers.
    - **Never move or delete a pushed tag.**
 3. Bump the pin in pint, in a separate pint commit. The steps are in
    `../pint/.claude/docs/release-and-sync.md`, section "Updating the metricsql pin".
@@ -93,12 +93,11 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
   oracle (`TestSourceProvenanceUpstreamSuccessCorpus`) fails until they have them.
 - **State on 2026-10-07:** the base is upstream release v0.87.5 (`13e13ef`), which is still
   upstream's newest release, and `main` has every upstream `master` commit.
-- **Release tag push:** since `bbb33ff`, the sync script also pushes the merged upstream
+- **Release tag push:** since `067f7fa`, the sync script also pushes the merged upstream
   release tag. The `-pint.N` base comes from `git describe` against those tags, so a merged
   release must have its tag here. AnatoliiVolchkov/pint uses the same script; its v0.89.0 sync on
   2026-10-07 is described in `../pint/.claude/docs/release-and-sync.md`.
-- **Secrets:** none are configured. `SYNC_TOKEN` is missing, so a sync can't push upstream
-  changes to `.github/workflows/*`.
+- **Secrets:** the owner sets `SYNC_TOKEN` in the browser. Without it, a sync can't push upstream changes to `.github/workflows/*`.
 
 ## Gotchas
 
