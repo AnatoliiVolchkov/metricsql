@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -81,7 +81,7 @@ jobs:
           cache: false
 
       # Our changes must not alter upstream behavior: run upstream's own tests, taken
-      # unchanged from the upstream commit our main is based on, against our code.
+      # unchanged from the upstream commit our master is based on, against our code.
       - name: Run upstream tests unchanged
         run: |
           git remote add upstream https://github.com/VictoriaMetrics/metricsql.git

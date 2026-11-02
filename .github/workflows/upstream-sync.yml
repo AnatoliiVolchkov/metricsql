@@ -37,7 +37,7 @@ jobs:
         with:
           show-progress: false
           fetch-depth: 0
-          ref: main
+          ref: master
           # GITHUB_TOKEN cannot push merges that change .github/workflows, SYNC_TOKEN can.
           token: ${{ secrets.SYNC_TOKEN || github.token }}
 
@@ -55,7 +55,7 @@ jobs:
           UPSTREAM_MODE: ${{ inputs.mode || 'release' }}
           UPSTREAM_TAG: ${{ inputs.tag }}
           UPSTREAM_BRANCH: master
-          BASE_BRANCH: main
+          BASE_BRANCH: master
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           TEST_CMD: go vet ./... && go test -count=1 ./... && go test -count=1 -race ./...
         run: bash .github/scripts/upstream-sync.sh
