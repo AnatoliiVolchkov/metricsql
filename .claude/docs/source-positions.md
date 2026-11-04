@@ -18,8 +18,8 @@ depends on.
 - **`ParseError{Msg, Pos}`** is what `Parse` returns for invalid queries. `Pos` points at the
   fragment the error refers to:
   - an unexpected token;
-  - an invalid regexp label filter (`cd22653`);
-  - a WITH template call (`df330cc`);
+  - an invalid regexp label filter (`0978a9b`);
+  - a WITH template call (`db8c4c7`);
   - an unsupported function.
 
   `withErrorPos` attaches a position only when the error doesn't carry one yet.
