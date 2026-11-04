@@ -97,7 +97,9 @@ GOWORK=off go build ./...      # back to the pinned tag, as CI builds
   release tag. The `-pint.N` base comes from `git describe` against those tags, so a merged
   release must have its tag here. AnatoliiVolchkov/pint uses the same script; its v0.89.0 sync on
   2026-10-07 is described in `../pint/.claude/docs/release-and-sync.md`.
-- **Secrets:** the owner sets `SYNC_TOKEN` in the browser. Without it, a sync can't push upstream changes to `.github/workflows/*`.
+- **Secrets:** none are set (user decision, 2026-11-04). Syncs are done from the development PC
+  as `avixyio`. Without the optional `SYNC_TOKEN`, the sync workflow can't push upstream changes
+  to `.github/workflows/*`.
 
 ## Gotchas
 
